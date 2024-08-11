@@ -1,2 +1,2 @@
-# promptius
-promptius - simple prompt engineering evaluation tool
+# Promptius - prompt engineering tool
+
