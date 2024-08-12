@@ -106,65 +106,6 @@ const JsonRenderer = ({ data, level = 0 }) => {
     const newDebugInfo = { ...debugInfo };
     const newProcessedCells = { ...processedCells };
   
-    const executeEvaluatorsForPrompt = async (promptResult, rowVariables) => {
-      const evaluations = [];
-      for (let evaluatorIndex = 0; evaluatorIndex < evaluators.length; evaluatorIndex++) {
-        const evaluator = evaluators[evaluatorIndex];
-        console.log(`Executing evaluator for prompt: ${evaluator.name}`);
-        let evaluatorPrompt = evaluator.prompt;
-        
-        try {
-          evaluatorPrompt = evaluatorPrompt.replace(/{{PROMPTRESULT}}/g, promptResult);
-          evaluatorPrompt = evaluatorPrompt.replace(/{{(\w+)}}/g, (_, key) => {
-            const value = rowVariables[key];
-            console.log(`Replacing variable ${key} with value: ${value}`);
-            return value !== undefined ? value : '';
-          });
-  
-          console.log(`Sending evaluator prompt: ${evaluatorPrompt}`);
-          const response = await fetch('/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer no-key'
-            },
-            body: JSON.stringify({
-              model: "gpt-4o-mini",
-              messages: [{ role: "user", content: evaluatorPrompt }]
-            }),
-          });
-  
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-  
-          const data = await response.json();
-          let output = data.choices[0].message.content;
-          
-          console.log(`Raw evaluator output: ${output}`);
-          
-          // Parse the JSON response
-          const parsedOutput = safeJSONParse(output);
-          console.log(`Parsed evaluator output:`, parsedOutput);
-          
-          if (parsedOutput) {
-            evaluations.push(parsedOutput);
-          } else {
-            throw new Error('Failed to parse evaluator output');
-          }
-  
-        } catch (error) {
-          console.error(`Error executing evaluator ${evaluator.name}:`, error);
-          evaluations.push({
-            Evalname: evaluator.name || 'Unknown',
-            score: null,
-            why: `Error executing evaluator: ${error.message}`
-          });
-        }
-      }
-      return evaluations;
-    };
-  
     for (let rowIndex = 0; rowIndex < variables.length; rowIndex++) {
       newResults[rowIndex] = newResults[rowIndex] || {};
       for (let promptIndex = 0; promptIndex < prompts.length; promptIndex++) {
@@ -202,11 +143,6 @@ const JsonRenderer = ({ data, level = 0 }) => {
           newResults[rowIndex][promptIndex] = { output, evaluations: [] };
           newDebugInfo[`${rowIndex}-${promptIndex}`] = "Success";
   
-          // Execute evaluators for this prompt
-          console.log(`Executing evaluators for prompt ${promptIndex}`);
-          const evaluations = await executeEvaluatorsForPrompt(output, variables[rowIndex]);
-          newResults[rowIndex][promptIndex].evaluations = evaluations;
-  
         } catch (error) {
           console.error('Error executing prompt:', error);
           newResults[rowIndex][promptIndex] = { output: 'Error executing prompt', evaluations: [] };
@@ -222,7 +158,7 @@ const JsonRenderer = ({ data, level = 0 }) => {
     }
     setActiveCell(null);
     console.log('Finished executing prompts');
-  }, [variables, prompts, results, debugInfo, processedCells, evaluators, safeJSONParse, setActiveCell, setResults, setDebugInfo, setProcessedCells]);
+  }, [variables, prompts, results, debugInfo, processedCells, setActiveCell, setResults, setDebugInfo, setProcessedCells]);
 
   const executeEvaluators = useCallback(async () => {
     console.log('Starting execution of evaluators');
@@ -238,10 +174,8 @@ const JsonRenderer = ({ data, level = 0 }) => {
             if (evaluator && typeof evaluator.prompt === 'string') {
               let evaluatorPrompt = evaluator.prompt;
               
-              // Replace {{PROMPTRESULT}} with cellContent.output
               evaluatorPrompt = evaluatorPrompt.replace(/{{PROMPTRESULT}}/g, cellContent.output);
               
-              // Replace other variables
               evaluatorPrompt = evaluatorPrompt.replace(/{{(\w+)}}/g, (_, key) => {
                 const value = variables[rowIndex][key];
                 console.log(`Replacing variable ${key} with value: ${value}`);
@@ -271,13 +205,14 @@ const JsonRenderer = ({ data, level = 0 }) => {
                 
                 console.log(`Raw evaluator output: ${output}`);
                 
-                // Parse the JSON response
+                // Use safeJSONParse here
                 const parsedOutput = safeJSONParse(output);
+                
                 console.log(`Parsed evaluator output:`, parsedOutput);
                 if (parsedOutput) {
                   evaluations.push(parsedOutput);
                 } else {
-                  throw new Error('Failed to parse evaluator output');
+                  throw new Error('Invalid evaluator output format');
                 }
   
               } catch (error) {
