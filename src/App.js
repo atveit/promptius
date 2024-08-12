@@ -34,6 +34,15 @@ const PromptEvaluationGrid = () => {
     });
   }, []);
 
+  const safeJSONParse = useCallback((str) => {
+    try {
+      return JSON.parse(str);
+    } catch (error) {
+      console.error('Error parsing JSON:', error);
+      return null;
+    }
+  }, []); // Empty dependency array
+
 const JsonRenderer = ({ data, level = 0 }) => {
   const indent = '  '.repeat(level);
 
@@ -77,180 +86,225 @@ const JsonRenderer = ({ data, level = 0 }) => {
     }
   }, [parseTSV]);
 
- const handleEvaluatorFileUpload = useCallback((event) => {
-  const file = event.target.files[0];
-  if (file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target.result;
-      const parsed = parseTSV(content);
-      setEvaluators(parsed);
-      console.log('Loaded evaluators:', parsed);
-    };
-    reader.readAsText(file);
-  }
-}, [parseTSV]);
-
-const executePrompts = useCallback(async () => {
-  const newResults = { ...results };
-  const newDebugInfo = { ...debugInfo };
-  const newProcessedCells = { ...processedCells };
-
-  for (let rowIndex = 0; rowIndex < variables.length; rowIndex++) {
-    newResults[rowIndex] = newResults[rowIndex] || {};
-    for (let promptIndex = 0; promptIndex < prompts.length; promptIndex++) {
-      setActiveCell({ rowIndex, promptIndex });
-      const prompt = prompts[promptIndex];
-      const promptText = prompt.prompt.replace(/{{(\w+)}}/g, (_, key) => variables[rowIndex][key] || '');
-      try {
-        const response = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer no-key'
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [{ role: "user", content: promptText }]
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const output = data.choices[0].message.content;
-
-        newResults[rowIndex][promptIndex] = { output, evaluations: [] };
-        newDebugInfo[`${rowIndex}-${promptIndex}`] = "Success";
-
-        // Execute evaluators for this prompt
-        const evaluations = await executeEvaluatorsForPrompt(output, variables[rowIndex]);
-        newResults[rowIndex][promptIndex].evaluations = evaluations;
-
-      } catch (error) {
-        console.error('Error executing prompt:', error);
-        newResults[rowIndex][promptIndex] = { output: 'Error executing prompt', evaluations: [] };
-        newDebugInfo[`${rowIndex}-${promptIndex}`] = `Error: ${error.message}`;
-      }
-      newProcessedCells[`${rowIndex}-${promptIndex}`] = true;
-      
-      // Update state after each cell is processed
-      setResults({ ...newResults });
-      setDebugInfo({ ...newDebugInfo });
-      setProcessedCells({ ...newProcessedCells });
+  const handleEvaluatorFileUpload = useCallback((event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target.result;
+        const parsedData = parseTSV(content);
+        console.log('Loaded evaluators:', parsedData);
+        setEvaluators(parsedData);
+      };
+      reader.readAsText(file);
     }
-  }
-  setActiveCell(null);
-}, [variables, prompts, results, debugInfo, processedCells]);
+  }, [parseTSV]);
 
-
-const executeEvaluators = useCallback(async () => {
-  const newResults = { ...results };
-  for (let rowIndex = 0; rowIndex < variables.length; rowIndex++) {
-    for (let promptIndex = 0; promptIndex < prompts.length; promptIndex++) {
-      const cellContent = newResults[rowIndex][promptIndex];
-      if (cellContent) {
-        const evaluations = [];
-        for (let evaluatorIndex = 0; evaluatorIndex < evaluators.length; evaluatorIndex++) {
-          const evaluator = evaluators[evaluatorIndex];
-          const evaluatorPrompt = evaluator.prompt
-            .replace(/{{PROMPTRESULT}}/g, cellContent.output)
-            .replace(/{{(\w+)}}/g, (_, key) => variables[rowIndex][key] || '');
-
-          try {
-            const response = await fetch('/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer no-key'
-              },
-              body: JSON.stringify({
-                model: "gpt-4o-mini",
-                messages: [{ role: "user", content: evaluatorPrompt }]
-              }),
-            });
-
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            let output = data.choices[0].message.content;
-            
-            // Remove any markdown formatting or triple quotes
-            output = output.replace(/```json\s?|\s?```/g, '').trim();
-            
-            // Parse the cleaned JSON response
-            const parsedOutput = JSON.parse(output);
-            evaluations.push(parsedOutput);
-
-          } catch (error) {
-            console.error('Error executing evaluator prompt:', error);
-            evaluations.push({
-              Evalname: evaluator.evalname,
-              score: null,
-              why: `Error executing evaluator prompt: ${error.message}`
-            });
+  const executePrompts = useCallback(async () => {
+    console.log('Starting execution of prompts');
+    const newResults = { ...results };
+    const newDebugInfo = { ...debugInfo };
+    const newProcessedCells = { ...processedCells };
+  
+    const executeEvaluatorsForPrompt = async (promptResult, rowVariables) => {
+      const evaluations = [];
+      for (let evaluatorIndex = 0; evaluatorIndex < evaluators.length; evaluatorIndex++) {
+        const evaluator = evaluators[evaluatorIndex];
+        console.log(`Executing evaluator for prompt: ${evaluator.name}`);
+        let evaluatorPrompt = evaluator.prompt;
+        
+        try {
+          evaluatorPrompt = evaluatorPrompt.replace(/{{PROMPTRESULT}}/g, promptResult);
+          evaluatorPrompt = evaluatorPrompt.replace(/{{(\w+)}}/g, (_, key) => {
+            const value = rowVariables[key];
+            console.log(`Replacing variable ${key} with value: ${value}`);
+            return value !== undefined ? value : '';
+          });
+  
+          console.log(`Sending evaluator prompt: ${evaluatorPrompt}`);
+          const response = await fetch('/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer no-key'
+            },
+            body: JSON.stringify({
+              model: "gpt-4o-mini",
+              messages: [{ role: "user", content: evaluatorPrompt }]
+            }),
+          });
+  
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
           }
+  
+          const data = await response.json();
+          let output = data.choices[0].message.content;
+          
+          console.log(`Raw evaluator output: ${output}`);
+          
+          // Parse the JSON response
+          const parsedOutput = safeJSONParse(output);
+          console.log(`Parsed evaluator output:`, parsedOutput);
+          
+          if (parsedOutput) {
+            evaluations.push(parsedOutput);
+          } else {
+            throw new Error('Failed to parse evaluator output');
+          }
+  
+        } catch (error) {
+          console.error(`Error executing evaluator ${evaluator.name}:`, error);
+          evaluations.push({
+            Evalname: evaluator.name || 'Unknown',
+            score: null,
+            why: `Error executing evaluator: ${error.message}`
+          });
         }
-        newResults[rowIndex][promptIndex].evaluations = evaluations;
+      }
+      return evaluations;
+    };
+  
+    for (let rowIndex = 0; rowIndex < variables.length; rowIndex++) {
+      newResults[rowIndex] = newResults[rowIndex] || {};
+      for (let promptIndex = 0; promptIndex < prompts.length; promptIndex++) {
+        setActiveCell({ rowIndex, promptIndex });
+        const prompt = prompts[promptIndex];
+        const promptText = prompt.prompt.replace(/{{(\w+)}}/g, (_, key) => {
+          const value = variables[rowIndex][key];
+          console.log(`Replacing variable ${key} with value: ${value}`);
+          return value !== undefined ? value : '';
+        });
+        
+        console.log(`Executing prompt: ${promptText}`);
+        
+        try {
+          const response = await fetch('/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer no-key'
+            },
+            body: JSON.stringify({
+              model: "gpt-4o-mini",
+              messages: [{ role: "user", content: promptText }]
+            }),
+          });
+  
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+  
+          const data = await response.json();
+          const output = data.choices[0].message.content;
+          console.log(`Prompt output: ${output}`);
+  
+          newResults[rowIndex][promptIndex] = { output, evaluations: [] };
+          newDebugInfo[`${rowIndex}-${promptIndex}`] = "Success";
+  
+          // Execute evaluators for this prompt
+          console.log(`Executing evaluators for prompt ${promptIndex}`);
+          const evaluations = await executeEvaluatorsForPrompt(output, variables[rowIndex]);
+          newResults[rowIndex][promptIndex].evaluations = evaluations;
+  
+        } catch (error) {
+          console.error('Error executing prompt:', error);
+          newResults[rowIndex][promptIndex] = { output: 'Error executing prompt', evaluations: [] };
+          newDebugInfo[`${rowIndex}-${promptIndex}`] = `Error: ${error.message}`;
+        }
+        newProcessedCells[`${rowIndex}-${promptIndex}`] = true;
+        
+        // Update state after each cell is processed
+        setResults({ ...newResults });
+        setDebugInfo({ ...newDebugInfo });
+        setProcessedCells({ ...newProcessedCells });
       }
     }
-  }
-  setResults({ ...newResults });
-}, [evaluators, variables, results, prompts.length]);
+    setActiveCell(null);
+    console.log('Finished executing prompts');
+  }, [variables, prompts, results, debugInfo, processedCells, evaluators, safeJSONParse, setActiveCell, setResults, setDebugInfo, setProcessedCells]);
 
-
-
-const executeEvaluatorsForPrompt = async (promptResult, rowVariables) => {
-  const evaluations = [];
-  for (let evaluatorIndex = 0; evaluatorIndex < evaluators.length; evaluatorIndex++) {
-    const evaluator = evaluators[evaluatorIndex];
-    const evaluatorPrompt = evaluator.prompt
-      .replace(/{{PROMPTRESULT}}/g, promptResult)
-      .replace(/{{(\w+)}}/g, (_, key) => rowVariables[key] || '');
-
-    try {
-      const response = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer no-key'
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: evaluatorPrompt }]
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+  const executeEvaluators = useCallback(async () => {
+    console.log('Starting execution of evaluators');
+    const newResults = { ...results };
+    for (let rowIndex = 0; rowIndex < variables.length; rowIndex++) {
+      for (let promptIndex = 0; promptIndex < prompts.length; promptIndex++) {
+        const cellContent = newResults[rowIndex][promptIndex];
+        if (cellContent && cellContent.output) {
+          const evaluations = [];
+          for (let evaluatorIndex = 0; evaluatorIndex < evaluators.length; evaluatorIndex++) {
+            const evaluator = evaluators[evaluatorIndex];
+            console.log(`Executing evaluator: ${evaluator.name}`);
+            if (evaluator && typeof evaluator.prompt === 'string') {
+              let evaluatorPrompt = evaluator.prompt;
+              
+              // Replace {{PROMPTRESULT}} with cellContent.output
+              evaluatorPrompt = evaluatorPrompt.replace(/{{PROMPTRESULT}}/g, cellContent.output);
+              
+              // Replace other variables
+              evaluatorPrompt = evaluatorPrompt.replace(/{{(\w+)}}/g, (_, key) => {
+                const value = variables[rowIndex][key];
+                console.log(`Replacing variable ${key} with value: ${value}`);
+                return value !== undefined ? value : '';
+              });
+  
+              try {
+                console.log(`Sending evaluator prompt: ${evaluatorPrompt}`);
+                const response = await fetch('/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer no-key'
+                  },
+                  body: JSON.stringify({
+                    model: "gpt-4o-mini",
+                    messages: [{ role: "user", content: evaluatorPrompt }]
+                  }),
+                });
+  
+                if (!response.ok) {
+                  throw new Error(`HTTP error! status: ${response.status}`);
+                }
+  
+                const data = await response.json();
+                let output = data.choices[0].message.content;
+                
+                console.log(`Raw evaluator output: ${output}`);
+                
+                // Parse the JSON response
+                const parsedOutput = safeJSONParse(output);
+                console.log(`Parsed evaluator output:`, parsedOutput);
+                if (parsedOutput) {
+                  evaluations.push(parsedOutput);
+                } else {
+                  throw new Error('Failed to parse evaluator output');
+                }
+  
+              } catch (error) {
+                console.error(`Error executing evaluator ${evaluator.name}:`, error);
+                evaluations.push({
+                  Evalname: evaluator.name || 'Unknown',
+                  score: null,
+                  why: `Error executing evaluator: ${error.message}`
+                });
+              }
+            } else {
+              console.error('Invalid evaluator:', evaluator);
+              evaluations.push({
+                Evalname: 'Invalid Evaluator',
+                score: null,
+                why: 'Evaluator or its prompt is invalid'
+              });
+            }
+          }
+          newResults[rowIndex][promptIndex].evaluations = evaluations;
+        }
       }
-
-      const data = await response.json();
-      let output = data.choices[0].message.content;
-      
-      // Remove any markdown formatting or triple quotes
-      output = output.replace(/```json\s?|\s?```/g, '').trim();
-      
-      // Parse the cleaned JSON response
-      const parsedOutput = JSON.parse(output);
-      evaluations.push(parsedOutput);
-
-    } catch (error) {
-      console.error('Error executing evaluator prompt:', error);
-      evaluations.push({
-        Evalname: evaluator.evalname,
-        score: null,
-        why: `Error executing evaluator prompt: ${error.message}`
-      });
     }
-  }
-  return evaluations;
-};
-
+    console.log('Evaluation results:', newResults);
+  
+    setResults({ ...newResults });
+  }, [evaluators, variables, results, prompts.length, safeJSONParse]);
 
   const handleVote = useCallback((rowIndex, promptIndex, vote) => {
     setUserFeedback(prev => {
