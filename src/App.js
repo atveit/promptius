@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
 const PromptEvaluationGrid = () => {
+  
   const [variables, setVariables] = useState([
     { var1: "yoda jumped high", vartwo: "but had to fly", varthreeee: "before vader" },
     { var1: "yoda2 jumped high", vartwo: "but had to fly", varthreeee: "before vader" },
@@ -11,6 +12,16 @@ const PromptEvaluationGrid = () => {
     { prompt: "Translate to italian", comment: "the prompt" },
     { prompt: "Translate to swedish", comment: "another prompt" },
   ]);
+  
+
+//  const [variables, setVariables] = useState([]);
+//const [prompts, setPrompts] = useState([]);
+
+
+  useEffect(() => {
+    console.log('Prompts have been updated:', prompts);
+  }, [prompts]);
+  
 
   const [results, setResults] = useState({});
 
@@ -86,6 +97,7 @@ const JsonRenderer = ({ data, level = 0 }) => {
 };
 
   const handleFileUpload = useCallback((event, type) => {
+    console.log('Loading file:', event.target.files[0]);
     const file = event.target.files[0];
     if (file) {
       const reader = new FileReader();
@@ -95,7 +107,11 @@ const JsonRenderer = ({ data, level = 0 }) => {
         if (type === 'variables') {
           setVariables(parsed);
         } else if (type === 'prompts') {
+          console.log("clearing prompts");
+          setPrompts([])
+          console.log('Prompts state before setting:', parsed);
           setPrompts(parsed);
+          console.log('Prompts state after setting:', parsed);
         }
       };
       reader.readAsText(file);

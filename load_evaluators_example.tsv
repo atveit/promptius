@@ -1,0 +1,3 @@
+name	prompt	type
+QualityCheck	Rate the quality of this response on a scale of 1-10 (the score) and explain why with a terse sentence and return in json format with 3 keys: "Evalname":"QualityCheck" and "score" with the numeric score and "why" with the terse sentence description. Input Text to evaluate: {{PROMPTRESULT}}	score
+Readability	Rate the ease of readability of this response on a scale of 1-10 and explain why with a terse sentence and return in json format with 3 keys: "Evalname":"Readability" and "score" with the numeric score and "why" with the terse sentence description. Input Text to evaluate: {{PROMPTRESULT}}	score
