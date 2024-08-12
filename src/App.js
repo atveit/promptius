@@ -35,13 +35,29 @@ const PromptEvaluationGrid = () => {
   }, []);
 
   const safeJSONParse = useCallback((str) => {
+    console.log("safeJSONParse input:", str);
     try {
-      return JSON.parse(str);
+      // Remove triple backticks and 'json' keyword if present
+      let cleanedStr = str.replace(/^```json\s*|\s*```$/gm, '').trim();
+      console.log("Cleaned string:", cleanedStr);
+      
+      const parsed = JSON.parse(cleanedStr);
+      console.log("Parsed JSON:", parsed);
+      return parsed;
     } catch (error) {
       console.error('Error parsing JSON:', error);
-      return null;
+      console.log("Attempting to parse as single JSON object...");
+      try {
+        // Attempt to parse as a single JSON object
+        const singleObject = JSON.parse(`{${str.replace(/^{|}$/g, '').trim()}}`);
+        console.log("Parsed as single object:", singleObject);
+        return singleObject;
+      } catch (innerError) {
+        console.error('Error parsing as single object:', innerError);
+        return null;
+      }
     }
-  }, []); // Empty dependency array
+  }, []);
 
 const JsonRenderer = ({ data, level = 0 }) => {
   const indent = '  '.repeat(level);
@@ -203,14 +219,31 @@ const JsonRenderer = ({ data, level = 0 }) => {
                 const data = await response.json();
                 let output = data.choices[0].message.content;
                 
+                // In the executeEvaluators function, replace the existing parsing logic with:
+
                 console.log(`Raw evaluator output: ${output}`);
-                
-                // Use safeJSONParse here
-                const parsedOutput = safeJSONParse(output);
-                
+
+                // Attempt to extract JSON if wrapped in code blocks
+                const jsonMatch = output.match(/```json\s*([\s\S]*?)\s*```/);
+                const jsonString = jsonMatch ? jsonMatch[1] : output;
+
+                // Use updated safeJSONParse here
+                const parsedOutput = safeJSONParse(jsonString);
+
                 console.log(`Parsed evaluator output:`, parsedOutput);
-                if (parsedOutput) {
-                  evaluations.push(parsedOutput);
+
+
+                if (parsedOutput && typeof parsedOutput === 'object') {
+                  if (parsedOutput.Evalname && parsedOutput.score !== undefined) {
+                    evaluations.push(parsedOutput);
+                  } else {
+                    console.warn('Parsed output does not match expected format:', parsedOutput);
+                    evaluations.push({
+                      Evalname: evaluator.name || 'Unknown',
+                      score: null,
+                      why: `Invalid evaluator output format: ${JSON.stringify(parsedOutput)}`
+                    });
+                  }
                 } else {
                   throw new Error('Invalid evaluator output format');
                 }
